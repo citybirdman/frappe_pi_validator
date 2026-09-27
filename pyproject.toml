@@ -1,0 +1,30 @@
+[project]
+name = "frappe_pi_validator"
+authors = [
+    { name = "Ahmed Zaytoon", email = "ahmed.zaytoon@mobilityp.com" }
+]
+description = "Extract and validate tire Proforma Invoices (PDF / Excel) in Frappe"
+requires-python = ">=3.10"
+readme = "README.md"
+dynamic = ["version"]
+dependencies = [
+    "pdfplumber",
+    "openpyxl",
+    "xlrd",
+    "Pillow",
+    "numpy",
+    "pydantic>=2",
+    "pydantic-settings",
+]
+
+[project.optional-dependencies]
+# Only needed for scanned PDFs and images. Install PaddlePaddle for your
+# CPU/GPU first (see the document-intelligence README).
+ocr = ["paddleocr[doc-parser]", "opencv-python-headless"]
+
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.bench.frappe-dependencies]
+frappe = ">=15.0.0,<17.0.0"

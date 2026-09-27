@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+import re
+from typing import Any
+
+
+def normalize_text(value: Any) -> str:
+    if value is None:
+        return ""
+
+    return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def normalize_pr(value: str | None) -> str | None:
+    """8PR, 8 P.R., PR8 -> 8PR. No PR in the document -> None."""
+
+    if not value:
+        return None
+
+    text = normalize_text(value)
+
+    match = re.search(
+        r"""
+        (?:
+            (?P<number>\d+)\s*P\.?\s*R\.?
+            |
+            P\.?\s*R\.?\s*(?P<number_reverse>\d+)
+        )
+        """,
+        text,
+        re.IGNORECASE | re.VERBOSE,
+    )
+
+    if not match:
+        return None
+
+    number = match.group("number") or match.group("number_reverse")
+
+    return f"{number}PR"
+
+
+def normalize_quantity(value: str | None) -> int | None:
+    if not value:
+        return None
+
+    match = re.search(r"[\d,]+", value)
+
+    if not match:
+        return None
+
+    try:
+        return int(match.group(0).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def normalize_number(value: str | None) -> float | None:
+    if value is None:
+        return None
+
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    text = text.replace(",", "")
+
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def normalize_currency(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    text = normalize_text(value).upper()
+
+    if text.startswith("US$"):
+        return "US$"
+
+    if text.startswith("USD"):
+        return "USD"
+
+    if text.startswith("$"):
+        return "$"
+
+    if text.startswith("€"):
+        return "EUR"
+
+    if text.startswith("£"):
+        return "GBP"
+
+    return text
+
+
+def split_currency_amount(value: str) -> tuple[str | None, float | None]:
+    text = normalize_text(value)
+
+    match = re.match(
+        r"^(US\$|USD|\$|EUR|€|GBP|£)?\s*([\d,]+(?:\.\d+)?)$",
+        text,
+        re.IGNORECASE,
+    )
+
+    if not match:
+        return None, None
+
+    currency = normalize_currency(match.group(1))
+    amount = normalize_number(match.group(2))
+
+    return currency, amount
+
+
+def normalize_load_speed(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    text = normalize_text(value)
+
+    text = re.sub(
+        r"\s+XL$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    return text.upper()
+
+
+def normalize_unit(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    text = normalize_text(value).upper().rstrip(".")
+
+    mapping = {
+        "PC": "PCS",
+        "PCS": "PCS",
+        "EA": "EA",
+        "SET": "SET",
+        "SETS": "SETS",
+        "UNIT": "UNIT",
+        "UNITS": "UNITS",
+    }
+
+    return mapping.get(text, text)
