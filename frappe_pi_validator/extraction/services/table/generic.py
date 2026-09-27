@@ -576,7 +576,7 @@ def build_cells(
         if match and load_speed and int(match.group(1)) > 0:
             pr = f"{int(match.group(1))}PR"
 
-    pr = normalize_pr(pr or resolved.pr) if size else pr
+    pr = normalize_pr(pr or resolved.pr) if size else normalize_pr(pr)
 
     sidewall = None
 

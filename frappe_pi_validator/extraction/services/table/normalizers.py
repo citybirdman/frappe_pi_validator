@@ -12,7 +12,13 @@ def normalize_text(value: Any) -> str:
 
 
 def normalize_pr(value: str | None) -> str | None:
-    """8PR, 8 P.R., PR8 -> 8PR. No PR in the document -> None."""
+    """
+    8PR, 8 P.R., PR8, 04PR -> 8PR / 4PR.
+
+    A valid ply rating is a multiple of 2: 2PR, 4PR, 6PR, 8PR, 10PR ...
+    No PR in the document, or an odd / zero number (5PR, 9PR, 0PR)
+    -> None.
+    """
 
     if not value:
         return None
@@ -34,7 +40,11 @@ def normalize_pr(value: str | None) -> str | None:
     if not match:
         return None
 
-    number = match.group("number") or match.group("number_reverse")
+    number = int(match.group("number") or match.group("number_reverse"))
+
+    # Multiple of 2: 2, 4, 6, 8, 10 ...
+    if number < 2 or number % 2:
+        return None
 
     return f"{number}PR"
 

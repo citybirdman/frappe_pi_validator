@@ -476,7 +476,7 @@ class TireRowParser:
             "load_speed_rating": (
                 resolved.load_speed_rating
             ),
-            "pr": resolved.pr,
+            "pr": normalize_pr(resolved.pr),
             "sidewall": resolved.sidewall,
         }
 
