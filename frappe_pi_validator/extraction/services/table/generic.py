@@ -29,7 +29,9 @@ from typing import Any
 
 from frappe_pi_validator.extraction.models.extraction import Table
 from frappe_pi_validator.extraction.services.table.detectors import (
+    combine_load_speed,
     detect_load_speed,
+    detect_speed_symbol,
     detect_sidewall,
     detect_tire_size,
 )
@@ -99,14 +101,23 @@ FIELD_RULES = [
             r"|(usd|us\$|\$)\s*/\s*(pc|pcs|set|unit)|\brate\b",
         ),
         ("quantity", r"\bqty\b|q\s+ty|quantity|\bpcs\b|\bpieces\b|sets\s*/\s*pcs"),
+        # "Service description" is the tire term for load/speed.
+        ("load_speed_rating", r"service\s*desc"),
         (
             "description",
             r"size\s*(&|and)\s*pattern|description|commodity|\bgoods\b|\bproduct\b",
         ),
-        ("load_speed_rating", r"\bl\.?\s*i\b|li\s*[/&]\s*s\.?\s*r|\bload\b|\bspeed\b|\bindex\b"),
+        # Load index and speed symbol in separate columns; joined to a
+        # load/speed rating when both fit the formula (91 | V -> 91V).
+        ("load_index", r"^(l\.?\s*i\.?|load\s*index|load\s*idx)$"),
+        (
+            "speed_symbol",
+            r"^(s\.?\s*s\.?|s\.?\s*r\.?|s\.?\s*i\.?|speed(\s*(symbol|rating|rate|index|index))?)$",
+        ),
+        ("load_speed_rating", r"\bl\.?\s*i\b|li\s*[/&]\s*s\.?\s*r|\bload\b|\bspeed\b|\bindex\b|^l\s*/?\s*s$"),
         ("sidewall", r"\bs\s*/\s*w\b|sidewall"),
         ("pr", r"^p\.?\s*r\.?$|\bply\b"),
-        ("item_code", r"\bcode\b|material|article|\bsku\b|part\s*no"),
+        ("item_code", r"\bcode\b|material|article|\bsku\b|\b(part|art)\.?\s*no"),
         ("item_no", r"^(no\.?|s\s*/?\s*n|sr\.?|#|item\s*no\.?)$"),
         ("item", r"^item$"),
         ("brand", r"brand|trade\s*mark"),
@@ -120,10 +131,13 @@ FIELD_RULES = [
 ]
 
 PRODUCT_FIELDS = {"size", "description", "pattern"}
+REPEATABLE_FIELDS = {"item_code"}
 BUSINESS_FIELDS = {"quantity", "unit_price", "amount"}
 CORE_FIELDS = PRODUCT_FIELDS | BUSINESS_FIELDS | {
     "brand",
     "load_speed_rating",
+    "load_index",
+    "speed_symbol",
     "item_code",
     "item_no",
     "item",
@@ -138,6 +152,8 @@ DESCRIPTIVE_FIELDS = [
     "size",
     "pattern",
     "load_speed_rating",
+    "load_index",
+    "speed_symbol",
     "pr",
     "sidewall",
 ]
@@ -264,7 +280,13 @@ def build_layout(labels: list[Any]) -> HeaderLayout:
 
         field_name = map_header(text)
 
-        if field_name and field_name not in used:
+        # Several code columns (PART. NO. | ART. NO.) share the field;
+        # their non-empty values are joined.
+        if field_name in REPEATABLE_FIELDS:
+            fields.append(field_name)
+            previous = field_name
+
+        elif field_name and field_name not in used:
             used.add(field_name)
             fields.append(field_name)
             previous = field_name
@@ -414,6 +436,7 @@ def _expand_in_cell(
 
         215/60R16 95H ECO PLUS   -> ECO PLUS
         205/55R16 91V SPORT-7 XL -> SPORT-7
+        205/55R16 91 V SPORT-7   -> SPORT-7  (91 V is load/speed)
     """
 
     if not pattern or not cell_text:
@@ -424,10 +447,12 @@ def _expand_in_cell(
     if pattern not in tokens:
         return pattern
 
-    def is_other_field(token: str) -> bool:
+    def is_other_field(position: int) -> bool:
+        token = tokens[position]
         upper = token.upper()
         return bool(
-            token == brand
+            (position > 0 and combine_load_speed(tokens[position - 1], token))
+            or token == brand
             or detect_tire_size(token)
             or detect_load_speed(token)
             or detect_sidewall(token)
@@ -440,10 +465,10 @@ def _expand_in_cell(
     index = tokens.index(pattern)
     start = end = index
 
-    while start > 0 and not is_other_field(tokens[start - 1]):
+    while start > 0 and not is_other_field(start - 1):
         start -= 1
 
-    while end + 1 < len(tokens) and not is_other_field(tokens[end + 1]):
+    while end + 1 < len(tokens) and not is_other_field(end + 1):
         end += 1
 
     return " ".join(tokens[start:end + 1])
@@ -520,6 +545,33 @@ def build_cells(
         if detect_load_speed(token):
             load_speed = normalize_load_speed(token)
             break
+
+    # Only the speed symbol: LI/SR column holding "V".
+    if not load_speed and detect_speed_symbol(load_text):
+        load_speed = detect_speed_symbol(load_text).value
+
+    # Load index and speed symbol in separate columns:
+    #
+    #   Load Index | Speed Symbol      91 | V   -> 91V
+    #
+    # A "Load Index" column holding the full rating (156/150L) is
+    # taken as it is.
+    if not load_speed:
+
+        index_text = values.get("load_index", "")
+        symbol_text = values.get("speed_symbol", "")
+
+        full = detect_load_speed(index_text) or detect_load_speed(symbol_text)
+
+        if full:
+            load_speed = normalize_load_speed(full.value)
+        else:
+            joined = combine_load_speed(index_text or None, symbol_text or None)
+            if joined:
+                load_speed = normalize_load_speed(joined)
+            elif not index_text and detect_speed_symbol(symbol_text):
+                # Only the speed symbol is given.
+                load_speed = detect_speed_symbol(symbol_text).value
 
     # Pattern column, validated: some sheets swap pattern and
     # load/speed columns.

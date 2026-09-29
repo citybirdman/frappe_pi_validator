@@ -37,12 +37,26 @@ machine first, then
 
 ### Usage
 
-- Desk: **PI Validator** page (`/app/pi-validator`) → **Upload PI**.
-  Access: System Manager (change the roles on the Page to open it to
-  others).
-- API: `frappe_pi_validator.api.extract_file(file_url)` returns the
-  items, summary and unrecognized tables of an uploaded File
-  (`include_result=1` adds the full engine output).
+- Public web page (no login): **`/pi-validator`** → choose a file →
+  **Upload PI**. Same layout as the desk page; the result is shown in
+  place (no reload) and can be downloaded as CSV. Nothing is stored:
+  the file is processed in a temporary file and deleted. Limits, per site (`site_config.json`):
+
+  ```json
+  "pi_validator_max_file_mb": 10,
+  "pi_validator_rate_limit": 30
+  ```
+
+  (upload size in MB; extractions per IP per hour).
+- Desk page (login): **PI Validator** (`/app/pi-validator`) →
+  **Upload PI**. Access: System Manager (change the roles on the Page
+  to open it to others).
+- API:
+  - `frappe_pi_validator.api.extract_public` (guest, POST multipart
+    field `file`) — used by the public page; same limits.
+  - `frappe_pi_validator.api.extract_file(file_url)` (login) returns
+    the items, summary and unrecognized tables of an uploaded File
+    (`include_result=1` adds the full engine output).
 
 ### Updating the engine
 

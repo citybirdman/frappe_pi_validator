@@ -1,0 +1,42 @@
+{% extends "templates/web.html" %}
+
+{% block title %}{{ title|e }}{% endblock %}
+
+{% block page_content %}
+<div class="pi-validator" data-max-file-mb="{{ max_file_mb|e }}" data-csrf-token="{{ csrf_token|e }}">
+
+	<form class="pi-validator-head" novalidate>
+		<h3 class="pi-validator-title">{{ _("PI Validator") }}</h3>
+
+		<div class="pi-validator-actions">
+			<input class="form-control form-control-sm" type="file" name="file" accept=".pdf,.xlsx,.xlsm,.xls">
+			<button type="button" class="btn btn-primary btn-sm pi-upload">{{ _("Upload PI") }}</button>
+			<button type="button" class="btn btn-default btn-sm pi-download" hidden>{{ _("Download CSV") }}</button>
+		</div>
+	</form>
+
+	<div class="alert alert-danger pi-error" hidden></div>
+
+	<div class="pi-result">
+		<div class="text-muted text-center" style="padding: 60px 0;">
+			{{ _("Upload a proforma invoice (PDF, XLSX, XLSM or XLS) to extract its items.") }}
+		</div>
+	</div>
+
+</div>
+{% endblock %}
+
+{% block style %}
+<style>
+	.pi-validator { max-width: 1400px; margin: 0 auto; padding: 24px 0 48px; }
+	.pi-validator-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+		gap: 12px; margin-bottom: 20px; }
+	.pi-validator-title { margin: 0; font-weight: 600; }
+	.pi-validator-actions { display: flex; gap: 8px; align-items: center; }
+	.pi-validator-actions input[type="file"] { max-width: 280px; }
+</style>
+{% endblock %}
+
+{% block script %}
+<script src="/assets/frappe_pi_validator/js/pi_validator_web.js?v={{ build_version|e }}"></script>
+{% endblock %}

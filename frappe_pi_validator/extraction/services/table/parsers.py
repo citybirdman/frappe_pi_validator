@@ -6,6 +6,7 @@ from frappe_pi_validator.extraction.services.table.field_resolver import TirePro
 
 from frappe_pi_validator.extraction.services.table.detectors import (
     detect_load_speed,
+    detect_speed_symbol,
     detect_pr,
     detect_quantity,
     detect_sidewall,
@@ -776,6 +777,12 @@ class TireRowParser:
                     )
                 )
 
+            # Only the speed symbol: "V"
+            elif detect_speed_symbol(load_speed_raw):
+                load_speed = detect_speed_symbol(
+                    load_speed_raw
+                ).value
+
         quantity_raw = get(8)
 
         quantity = None
@@ -930,6 +937,12 @@ class TireRowParser:
             load_speed = normalize_load_speed(
                 load_speed_raw
             )
+
+        # Only the speed symbol: "V"
+        elif detect_speed_symbol(load_speed_raw):
+            load_speed = detect_speed_symbol(
+                load_speed_raw
+            ).value
 
         quantity = normalize_number(get("quantity"))
 
@@ -1323,6 +1336,27 @@ class TireRowParser:
         # load_speed       = 114/XL_V
         # -----------------------------------------------------
 
+        # A column holding only the speed symbol, after the size:
+        #
+        # LANDSAIL | 205/55R16 | LS588 | V | 200 | PCS ...
+        #
+        # Used only when no full load/speed is in the row, and kept
+        # out of the pattern.
+        lone_speed = None
+
+        if not any(
+            detect_load_speed(token)
+            for part in parts
+            for token in part.split()
+        ):
+            for part in after_product:
+                if detect_speed_symbol(part):
+                    lone_speed = detect_speed_symbol(part).value
+                    after_product = [
+                        other for other in after_product if other is not part
+                    ]
+                    break
+
         semantic_product_parts = [
             *product_parts,
             *after_product,
@@ -1345,6 +1379,7 @@ class TireRowParser:
 
         load_speed = (
             resolved.load_speed_rating
+            or lone_speed
         )
 
         pr = resolved.pr

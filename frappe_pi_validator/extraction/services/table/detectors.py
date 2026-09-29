@@ -138,8 +138,21 @@ def contains_tire_size(text: str) -> bool:
 # The Landsail forms are preserved exactly as detected.
 # ---------------------------------------------------------
 
+# Load / speed formula (ISO 4000 / ETRTO service description):
+#
+#     LI [ / LI2 ] SS          91V, 106/104R, 156/150L, 98(Y)
+#
+#     LI   load index 0-279 (max load per tire)
+#     LI2  dual-fitment load index, lower than LI
+#     SS   speed symbol: B-H, J-N, P-W, Y, Z or (Y)
+#          (A1-A8 are special; A, I, O, X alone are never speed symbols)
+
+SPEED_SYMBOL = r"(?:[B-HJ-NP-WYZ]|\(Y\))"
+
+MAX_LOAD_INDEX = 279
+
 LOAD_SPEED_PATTERN = re.compile(
-    r"""
+    rf"""
     ^
     (?:
         # Standard single load/speed:
@@ -147,14 +160,15 @@ LOAD_SPEED_PATTERN = re.compile(
         # 86T
         # 97W
         # 94WXL
-        \d{2,3}[A-Z](?:\s*XL)?
+        # 98(Y)
+        (?P<li>\d{{2,3}}){SPEED_SYMBOL}(?:\s*XL)?
 
         |
 
         # Standard dual load/speed:
         # 106/104R
         # 123/119L
-        \d{2,3}/\d{2,3}[A-Z](?:\s*XL)?
+        (?P<dual_li>\d{{2,3}})/(?P<dual_li2>\d{{2,3}}){SPEED_SYMBOL}(?:\s*XL)?
 
         |
 
@@ -163,7 +177,7 @@ LOAD_SPEED_PATTERN = re.compile(
         # 110/XL_V
         # 106/XL_W
         # 113/XL_V
-        \d{2,3}/XL_[A-Z]
+        (?P<xl_li>\d{{2,3}})/XL_{SPEED_SYMBOL}
 
         |
 
@@ -171,13 +185,13 @@ LOAD_SPEED_PATTERN = re.compile(
         # 115_V
         # 113_H
         # 82_H
-        \d{2,3}_[A-Z]
+        (?P<us_li>\d{{2,3}})_{SPEED_SYMBOL}
 
         |
 
         # Landsail dual-index notation:
         # 109/107_T
-        \d{2,3}/\d{2,3}_[A-Z]
+        (?P<us_dual_li>\d{{2,3}})/(?P<us_dual_li2>\d{{2,3}})_{SPEED_SYMBOL}
     )
     $
     """,
@@ -185,12 +199,82 @@ LOAD_SPEED_PATTERN = re.compile(
 )
 
 
+def _valid_load_indexes(match: re.Match) -> bool:
+    """LI within 0-279; in a dual rating the second index is lower."""
+
+    single = next(
+        (
+            match.group(name)
+            for name in ("li", "xl_li", "us_li")
+            if match.group(name)
+        ),
+        None,
+    )
+
+    if single is not None:
+        return int(single) <= MAX_LOAD_INDEX
+
+    first = match.group("dual_li") or match.group("us_dual_li")
+    second = match.group("dual_li2") or match.group("us_dual_li2")
+
+    return int(first) <= MAX_LOAD_INDEX and int(second) < int(first)
+
+
+def detect_speed_symbol(text) -> Detection | None:
+    """
+    Speed symbol written alone (no load index): V, H, (Y).
+
+    Only meaningful where the position says it is a load/speed
+    value (its own column); a letter inside free text is not.
+    """
+
+    if text is None:
+        return None
+
+    value = str(text).strip().upper()
+
+    if not re.fullmatch(SPEED_SYMBOL, value, re.IGNORECASE):
+        return None
+
+    return Detection(value=value, start=0, end=len(value))
+
+
+def combine_load_speed(load_index, speed_symbol) -> str | None:
+    """
+    Load index and speed symbol written apart:
+
+        91 | V        -> 91V
+        106/104 | R   -> 106/104R
+
+    Returns the joined value only when it fits the formula.
+    """
+
+    if load_index is None or speed_symbol is None:
+        return None
+
+    load_index = str(load_index).strip()
+    speed_symbol = str(speed_symbol).strip().upper()
+
+    if isinstance(load_index, str) and load_index.endswith(".0"):
+        load_index = load_index[:-2]
+
+    if not re.fullmatch(r"\d{2,3}(?:/\d{2,3})?", load_index):
+        return None
+
+    if not re.fullmatch(SPEED_SYMBOL, speed_symbol, re.IGNORECASE):
+        return None
+
+    detection = detect_load_speed(load_index + speed_symbol)
+
+    return detection.value if detection else None
+
+
 def detect_load_speed(text: str) -> Detection | None:
     value = text.strip()
 
     match = LOAD_SPEED_PATTERN.fullmatch(value)
 
-    if not match:
+    if not match or not _valid_load_indexes(match):
         return None
 
     # Keep the original notation.
@@ -209,7 +293,7 @@ def detect_load_speed(text: str) -> Detection | None:
     # is part of the source document's product specification.
 
     if re.fullmatch(
-        r"\d{2,3}[A-Z](?:\s*XL)?",
+        rf"\d{{2,3}}{SPEED_SYMBOL}(?:\s*XL)?",
         value,
         re.IGNORECASE,
     ):

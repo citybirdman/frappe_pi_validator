@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from frappe_pi_validator.extraction.services.table.detectors import (
+    combine_load_speed,
     detect_load_speed,
     detect_pr,
     detect_sidewall,
@@ -626,7 +627,25 @@ class TireProductResolver:
 
         - [G-127]84H      -> 84H
         - [SC328]102/100Q -> 102/100Q
+
+        Load index and speed symbol written apart are joined when
+        together they fit the load/speed formula:
+
+        - 91 V            -> 91V
+        - 106/104 R       -> 106/104R
         """
+        # 98(Y): brackets are part of the speed symbol here.
+        for token in re.finditer(r"(?<![\w/])\d{2,3}(?:/\d{2,3})?\(Y\)", text, re.IGNORECASE):
+            detected = detect_load_speed(token.group(0))
+            if detected:
+                return FieldMatch(
+                    value=detected.value,
+                    confidence=0.98,
+                    start=token.start(),
+                    end=token.end(),
+                    reason="tire load/speed grammar",
+                )
+
         for token in re.finditer(r"[^\s\[\]\(\)]+", text):
             raw_value = token.group(0)
             value = raw_value.strip(" ,;:[]()")
@@ -645,6 +664,24 @@ class TireProductResolver:
                 end=token.start() + len(value),
                 reason="tire load/speed grammar",
             )
+
+        tokens = list(re.finditer(r"\S+", text))
+
+        for first, second in zip(tokens, tokens[1:]):
+
+            joined = combine_load_speed(
+                first.group(0).strip(",;:"),
+                second.group(0).strip(",;:"),
+            )
+
+            if joined:
+                return FieldMatch(
+                    value=joined,
+                    confidence=0.9,
+                    start=first.start(),
+                    end=second.end(),
+                    reason="load index and speed symbol written apart",
+                )
 
         return None
 

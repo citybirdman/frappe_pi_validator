@@ -82,19 +82,15 @@ def normalize_number(value: str | None) -> float | None:
 
 
 def normalize_currency(value: str | None) -> str | None:
+    """Currency as ISO code: USD, US$, $ -> USD; EUR / GBP likewise."""
+
     if not value:
         return None
 
     text = normalize_text(value).upper()
 
-    if text.startswith("US$"):
-        return "US$"
-
-    if text.startswith("USD"):
+    if text.startswith(("US$", "USD", "$")):
         return "USD"
-
-    if text.startswith("$"):
-        return "$"
 
     if text.startswith("€"):
         return "EUR"
@@ -124,13 +120,21 @@ def split_currency_amount(value: str) -> tuple[str | None, float | None]:
 
 
 def normalize_load_speed(value: str | None) -> str | None:
+    """
+    XL (reinforced) is not part of the load/speed rating:
+
+        97W XL -> 97W
+        112HXL -> 112H
+        114/XL_V -> 114/XL_V   (Landsail notation, kept)
+    """
+
     if not value:
         return None
 
     text = normalize_text(value)
 
     text = re.sub(
-        r"\s+XL$",
+        r"\s*XL$",
         "",
         text,
         flags=re.IGNORECASE,
