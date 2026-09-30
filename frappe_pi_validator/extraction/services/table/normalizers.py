@@ -168,3 +168,31 @@ def normalize_unit(value: str | None) -> str | None:
     }
 
     return mapping.get(text, text)
+
+
+def format_size(value: str | None) -> str | None:
+    """
+    Size as shown in the results:
+
+    1. Remove P, LT, C, Z, XL and any space:
+           P225/70R15 -> 225/70R15    LT265/75R16 -> 265/75R16
+           185R14C    -> 185R14       215/55ZR17  -> 215/55R17
+           205/55 R16 -> 205/55R16
+
+    2. Remove the dot of .00 / .50 / .25:
+           7.50R16 -> 750R16    12.00R20 -> 1200R20    8.25R16 -> 825R16
+       (315/80R22.5, 9.5R17.5, 18.4-38 keep their dot)
+    """
+
+    if not value:
+        return value
+
+    text = str(value).upper()
+
+    for marker in ("XL", "LT", "P", "C", "Z"):
+        text = text.replace(marker, "")
+
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"\.(?=00|50|25)", "", text)
+
+    return text or None

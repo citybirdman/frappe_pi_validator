@@ -1534,6 +1534,7 @@ class TireRowParser:
         # -----------------------------------------------------
 
         cells = {
+            "_tail": (semantic_product_text.split() or [None])[-1],
             "item_no": item_no,
             "brand": brand,
             "size": resolved.size,

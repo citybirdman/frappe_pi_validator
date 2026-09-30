@@ -641,7 +641,7 @@ class TireProductResolver:
         - 91 V            -> 91V
         - 106/104 R       -> 106/104R
         """
-        # 98(Y): brackets are part of the speed symbol here.
+        # 98(Y): only if the speed symbol list allows (Y).
         for token in re.finditer(r"(?<![\w/])\d{2,3}(?:/\d{2,3})?\(Y\)", text, re.IGNORECASE):
             detected = detect_load_speed(token.group(0))
             if detected:

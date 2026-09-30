@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from frappe_pi_validator.extraction.models.extraction import Table
-from frappe_pi_validator.extraction.services.table.brands import canonical_brand
+from frappe_pi_validator.extraction.services.table.brands import canonical_brand, fill_truncated_brands
 from frappe_pi_validator.extraction.services.table.detectors import (
     contains_tire_size,
     split_load_speed,
@@ -40,6 +40,7 @@ from frappe_pi_validator.extraction.services.table.detectors import (
 )
 from frappe_pi_validator.extraction.services.table.field_resolver import TireProductResolver
 from frappe_pi_validator.extraction.services.table.normalizers import (
+    format_size,
     normalize_currency,
     normalize_load_speed,
     normalize_pr,
@@ -332,10 +333,28 @@ def merge_header_rows(upper: list[Any], lower: list[Any]) -> list[str]:
 
     labels = []
 
+    # Lower-row labels: an empty cell between two of them continues
+    # the label on its left (a header spanning cells), so text above
+    # it is not a header:
+    #
+    #   N/M  |       |         | FOB QINGDAO |   |        <- note above
+    #   BRAND| SIZE  | SPEED   |             |   | QTY    <- header
+    #                  114       (span)        H
+    filled = [
+        index
+        for index in range(len(lower))
+        if clean_text(lower[index])
+    ]
+    first, last = (filled[0], filled[-1]) if filled else (None, None)
+
     for index in range(max(len(upper), len(lower))):
 
         top = clean_text(upper[index]) if index < len(upper) else ""
         bottom = clean_text(lower[index]) if index < len(lower) else ""
+
+        if not bottom and first is not None and first < index < last:
+            labels.append("")
+            continue
 
         if bottom and map_header(bottom):
             labels.append(bottom)
@@ -484,6 +503,34 @@ def _expand_in_cell(
     return " ".join(tokens[start:end + 1])
 
 
+def _load_speed_in_column(text: str, letter_only: bool = True) -> str | None:
+    """
+    Load/speed in a load/speed column. The header can span two cells,
+    so index and symbol arrive apart:
+
+        114H      -> 114H
+        114 H     -> 114H     (L/S header over two cells: 114 | H)
+        95/93 R   -> 95/93R
+        V         -> V        (speed symbol only, letter_only=True)
+    """
+
+    tokens = (text or "").split()
+
+    for token in tokens:
+        if detect_load_speed(token):
+            return normalize_load_speed(token)
+
+    for first, second in zip(tokens, tokens[1:]):
+        joined = combine_load_speed(first, second)
+        if joined:
+            return normalize_load_speed(joined)
+
+    if letter_only and detect_speed_symbol(text):
+        return detect_speed_symbol(text).value
+
+    return None
+
+
 def _pattern_after_brand(
     cell_text: str,
     brand: str | None,
@@ -578,17 +625,8 @@ def build_cells(
     size = size or resolved.size
 
     # Load/speed column, validated by grammar ("88H 04" -> 88H).
-    load_speed = None
     load_text = values.get("load_speed_rating", "")
-
-    for token in load_text.split():
-        if detect_load_speed(token):
-            load_speed = normalize_load_speed(token)
-            break
-
-    # Only the speed symbol: LI/SR column holding "V".
-    if not load_speed and detect_speed_symbol(load_text):
-        load_speed = detect_speed_symbol(load_text).value
+    load_speed = _load_speed_in_column(load_text)
 
     # Load index and speed symbol in separate columns:
     #
@@ -601,10 +639,10 @@ def build_cells(
         index_text = values.get("load_index", "")
         symbol_text = values.get("speed_symbol", "")
 
-        full = detect_load_speed(index_text) or detect_load_speed(symbol_text)
+        full = _load_speed_in_column(index_text, letter_only=False) or _load_speed_in_column(symbol_text, letter_only=False)
 
         if full:
-            load_speed = normalize_load_speed(full.value)
+            load_speed = full
         else:
             joined = combine_load_speed(index_text or None, symbol_text or None)
             if joined:
@@ -751,6 +789,7 @@ def build_cells(
     description = values.get("description") or " ".join(extra) or None
 
     return {
+        "_tail": (descriptive.split() or [None])[-1],
         "item_no": item_code or item_no,
         "description": description,
         "brand": brand,
@@ -840,6 +879,12 @@ def is_summary_row(cells: list[Any]) -> bool:
 
 
 def keep_product_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = _keep_product_rows(rows)
+    fill_truncated_brands(rows)
+    return rows
+
+
+def _keep_product_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     When a table lists tire sizes, a row without a size is a
     summary or note, not a product:
@@ -1148,6 +1193,9 @@ def table_value(cells: dict[str, Any], header: str) -> Any:
     # list says so), also when it comes from a Brand column.
     if header == "brand":
         return canonical_brand(cells.get("brand"))
+
+    if header == "size":
+        return format_size(cells.get("size"))
 
     return cells.get(header)
 

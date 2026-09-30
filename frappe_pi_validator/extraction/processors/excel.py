@@ -471,10 +471,12 @@ class ExcelProcessor:
 
         if candidates:
 
-            # Known sheet formats come first and win ties.
+            # Most tire rows, then complete rows, then filled fields
+            # (a reader that also gets load/speed wins); remaining ties
+            # go to the known sheet formats, which come first.
             best = max(
                 candidates,
-                key=lambda table: table_score(table)[:2],
+                key=table_score,
             )
 
             if table_score(best)[1] > 0:

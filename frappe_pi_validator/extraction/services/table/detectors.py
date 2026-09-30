@@ -66,11 +66,11 @@ TIRE_SIZE_PATTERN = re.compile(
         # Skid steer: 10-16.5, 12-16.5, 14-17.5
         (?P<sk_w>\d{{2}})-(?P<sk_rim>\d{{2}}\.5)
         |
-        # Truck, integer width: 11R22.5, 12R22.5, 12R20
-        (?P<int_w>\d{{2}})R(?P<int_rim>\d{{2}}(?:\.5)?)
+        # Truck, integer width: 11R22.5, 12R22.5, 12 R20
+        (?P<int_w>\d{{2}})\s?R(?P<int_rim>\d{{2}}(?:\.5)?)
         |
-        # Alpha-numeric: 185R14C, 165SR13, 185HR14, 205R16
-        (?P<al_w>\d{{3}})[SHTVZ]?R(?P<al_rim>\d{{2}})
+        # Alpha-numeric: 185R14C, 165SR13, 185HR14, 205R16, 195 R14C
+        (?P<al_w>\d{{3}})\s?[SHTVZ]?R(?P<al_rim>\d{{2}})
         |
         # Motorcycle alpha: MT90-16, MU85B16
         M[A-Z](?P<mo_a>\d{{2}})[-B](?P<mo_rim>\d{{2}})
@@ -195,16 +195,16 @@ def contains_tire_size(text: str) -> bool:
 
 # Load / speed formula (ISO 4000 / ETRTO service description):
 #
-#     LI [ / LI2 ] SS          91V, 106/104R, 156/150L, 98(Y)
+#     LI [ / LI2 ] SS          93V, 95/93R, 106/104Q
 #
-#     LI   load index 0-279 (max load per tire)
-#     LI2  dual-fitment load index, lower than LI
-#     SS   speed symbol: A1-A8 (agricultural / industrial), B-H, J-N,
-#          P-W, Y, Z or (Y); A, I, O, X alone are never speed symbols
+#     LI   load index 1-150 (max load per tire)
+#     LI2  dual-fitment load index, lower than LI (95/93)
+#     SS   speed symbol: J K L M N P Q R S T H V W Y
 
-SPEED_SYMBOL = r"(?:A[1-8]|[B-HJ-NP-WYZ]|\(Y\))"
+SPEED_SYMBOL = r"(?:[JKLMNPQRSTHVWY])"
 
-MAX_LOAD_INDEX = 279
+MIN_LOAD_INDEX = 1
+MAX_LOAD_INDEX = 150
 
 LOAD_SPEED_PATTERN = re.compile(
     rf"""
@@ -215,15 +215,14 @@ LOAD_SPEED_PATTERN = re.compile(
         # 86T
         # 97W
         # 94WXL
-        # 98(Y)
-        (?P<li>\d{{2,3}}){SPEED_SYMBOL}(?:\s*XL)?
+        (?P<li>\d{{1,3}}){SPEED_SYMBOL}(?:\s*XL)?
 
         |
 
         # Standard dual load/speed:
         # 106/104R
         # 123/119L
-        (?P<dual_li>\d{{2,3}})/(?P<dual_li2>\d{{2,3}}){SPEED_SYMBOL}(?:\s*XL)?
+        (?P<dual_li>\d{{1,3}})/(?P<dual_li2>\d{{1,3}}){SPEED_SYMBOL}(?:\s*XL)?
 
         |
 
@@ -232,7 +231,7 @@ LOAD_SPEED_PATTERN = re.compile(
         # 110/XL_V
         # 106/XL_W
         # 113/XL_V
-        (?P<xl_li>\d{{2,3}})/XL_{SPEED_SYMBOL}
+        (?P<xl_li>\d{{1,3}})/XL_{SPEED_SYMBOL}
 
         |
 
@@ -240,13 +239,13 @@ LOAD_SPEED_PATTERN = re.compile(
         # 115_V
         # 113_H
         # 82_H
-        (?P<us_li>\d{{2,3}})_{SPEED_SYMBOL}
+        (?P<us_li>\d{{1,3}})_{SPEED_SYMBOL}
 
         |
 
         # Landsail dual-index notation:
         # 109/107_T
-        (?P<us_dual_li>\d{{2,3}})/(?P<us_dual_li2>\d{{2,3}})_{SPEED_SYMBOL}
+        (?P<us_dual_li>\d{{1,3}})/(?P<us_dual_li2>\d{{1,3}})_{SPEED_SYMBOL}
     )
     $
     """,
@@ -255,7 +254,7 @@ LOAD_SPEED_PATTERN = re.compile(
 
 
 def _valid_load_indexes(match: re.Match) -> bool:
-    """LI within 0-279; in a dual rating the second index is lower."""
+    """LI within 1-150; in a dual rating the higher index comes first."""
 
     single = next(
         (
@@ -267,12 +266,14 @@ def _valid_load_indexes(match: re.Match) -> bool:
     )
 
     if single is not None:
-        return int(single) <= MAX_LOAD_INDEX
+        return MIN_LOAD_INDEX <= int(single) <= MAX_LOAD_INDEX
 
     first = match.group("dual_li") or match.group("us_dual_li")
     second = match.group("dual_li2") or match.group("us_dual_li2")
 
-    return int(first) <= MAX_LOAD_INDEX and int(second) < int(first)
+    return (
+        MIN_LOAD_INDEX <= int(second) < int(first) <= MAX_LOAD_INDEX
+    )
 
 
 def split_load_speed(value) -> tuple[str | None, str | None]:
@@ -283,8 +284,6 @@ def split_load_speed(value) -> tuple[str | None, str | None]:
         106/104R  -> ("106/104", "R")
         114/XL_V  -> ("114", "V")      Landsail notation
         109/107_T -> ("109/107", "T")
-        98(Y)     -> ("98", "(Y)")
-        146A8     -> ("146", "A8")
         V         -> (None, "V")       speed rating only
     """
 
@@ -297,7 +296,7 @@ def split_load_speed(value) -> tuple[str | None, str | None]:
         return None, text
 
     match = re.fullmatch(
-        rf"(?P<li>\d{{2,3}}(?:/\d{{2,3}})?)(?:/XL_|_)?(?P<ss>{SPEED_SYMBOL})",
+        rf"(?P<li>\d{{1,3}}(?:/\d{{1,3}})?)(?:/XL_|_)?(?P<ss>{SPEED_SYMBOL})",
         text,
         re.IGNORECASE,
     )
@@ -310,7 +309,7 @@ def split_load_speed(value) -> tuple[str | None, str | None]:
 
 def detect_speed_symbol(text) -> Detection | None:
     """
-    Speed symbol written alone (no load index): V, H, (Y).
+    Speed symbol written alone (no load index): V, H.
 
     Only meaningful where the position says it is a load/speed
     value (its own column); a letter inside free text is not.
@@ -346,7 +345,7 @@ def combine_load_speed(load_index, speed_symbol) -> str | None:
     if isinstance(load_index, str) and load_index.endswith(".0"):
         load_index = load_index[:-2]
 
-    if not re.fullmatch(r"\d{2,3}(?:/\d{2,3})?", load_index):
+    if not re.fullmatch(r"\d{1,3}(?:/\d{1,3})?", load_index):
         return None
 
     if not re.fullmatch(SPEED_SYMBOL, speed_symbol, re.IGNORECASE):
@@ -381,7 +380,7 @@ def detect_load_speed(text: str) -> Detection | None:
     # is part of the source document's product specification.
 
     if re.fullmatch(
-        rf"\d{{2,3}}{SPEED_SYMBOL}(?:\s*XL)?",
+        rf"\d{{1,3}}{SPEED_SYMBOL}(?:\s*XL)?",
         value,
         re.IGNORECASE,
     ):

@@ -143,3 +143,50 @@ def canonical_brand(value):
 
 def is_not_brand(word: str) -> bool:
     return str(word).upper() in NOT_BRANDS
+
+
+def fill_truncated_brands(rows: list[dict]) -> None:
+    """
+    Fixed-width description columns cut the brand off:
+
+        ... M+S Esr MAX        ... ESr MAXX        ... ESr M
+
+    When one known brand runs through the table, a row whose product
+    text ends in the start of it (or has only that cut-off start as
+    brand) gets the full brand. Tables with several brands are left
+    as they are. rows: cell dicts; "_tail" = last product-text word.
+    """
+
+    found = {
+        canonical_brand(row.get("brand"))
+        for row in rows
+        if row.get("brand") and find_known_brand(str(row["brand"]))
+    }
+
+    if len(found) != 1:
+        return
+
+    brand = found.pop()
+    key = _key(brand)
+
+    for row in rows:
+
+        current = row.get("brand")
+
+        if current and _key(current) == key:
+            continue
+
+        # Cut-off start taken as brand: MAXX -> MAXXIS
+        if current and not find_known_brand(str(current)):
+            if key.startswith(_key(current)):
+                row["brand"] = brand
+            continue
+
+        tail = _key(row.get("_tail") or "")
+
+        if not current and tail and (
+            key.startswith(tail)
+            # glued to the word before: IEsrMAX -> MAX
+            or any(key.startswith(tail[i:]) for i in range(len(tail) - 2) if len(tail) - i >= 3)
+        ):
+            row["brand"] = brand

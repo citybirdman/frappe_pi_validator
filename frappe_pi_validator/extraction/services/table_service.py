@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from frappe_pi_validator.extraction.services.table.brands import fill_truncated_brands
 from frappe_pi_validator.extraction.services.table.models import OCRBlock, ParsedRow
 from frappe_pi_validator.extraction.services.table.parsers import TireRowParser
 
@@ -30,7 +31,11 @@ class TableService:
 
             rows.append(parsed)
 
-        return self._deduplicate_rows(rows)
+        rows = self._deduplicate_rows(rows)
+
+        fill_truncated_brands([row.cells for row in rows])
+
+        return rows
 
     @staticmethod
     def _deduplicate_rows(
