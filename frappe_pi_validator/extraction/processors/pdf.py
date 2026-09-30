@@ -85,9 +85,9 @@ class PDFProcessor:
         # come first: they know which column is which, while tire
         # rows infer it from position (e.g. a PLY column next to the
         # quantity).
-        best = max(candidates, key=lambda table: table_score(table)[0])
+        best = max(candidates, key=lambda table: table_score(table)[:2])
 
-        if table_score(best)[0] > 0:
+        if table_score(best)[1] > 0:
             return [best]
 
         raw_tables = []

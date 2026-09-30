@@ -28,7 +28,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from frappe_pi_validator.extraction.models.extraction import Table
+from frappe_pi_validator.extraction.services.table.brands import canonical_brand
 from frappe_pi_validator.extraction.services.table.detectors import (
+    contains_tire_size,
+    split_load_speed,
     combine_load_speed,
     detect_load_speed,
     detect_speed_symbol,
@@ -50,7 +53,8 @@ CANONICAL_HEADERS = [
     "brand",
     "size",
     "pattern",
-    "load_speed_rating",
+    "load_index",
+    "speed_rating",
     "pr",
     "sidewall",
     "quantity",
@@ -123,7 +127,7 @@ FIELD_RULES = [
         ("brand", r"brand|trade\s*mark"),
         ("pattern", r"pattern|tread"),
         ("size", r"\bsize\b|\bspec"),
-        ("unit", r"^unit$|\buom\b"),
+        ("unit", r"^unit$|^u\.?\s*o\.?\s*m\.?$|^u\s*/\s*m$"),
         ("type", r"^type$"),
         ("remark", r"remark|\bnote\b|\betd\b|delivery|shipment"),
         ("shipping_mark", r"shipping|\bmarks?\b"),
@@ -437,6 +441,11 @@ def _expand_in_cell(
         215/60R16 95H ECO PLUS   -> ECO PLUS
         205/55R16 91V SPORT-7 XL -> SPORT-7
         205/55R16 91 V SPORT-7   -> SPORT-7  (91 V is load/speed)
+        215/65 R15 96H Achilles 868 All Seasons -> 868 All Seasons
+        225/70 R16 107H XL Achilles Desert Hawk H/T 2 -> Desert Hawk H/T 2
+
+    Whole numbers can be part of a pattern (quantities have their own
+    column); decimals (prices) cannot.
     """
 
     if not pattern or not cell_text:
@@ -452,13 +461,14 @@ def _expand_in_cell(
         upper = token.upper()
         return bool(
             (position > 0 and combine_load_speed(tokens[position - 1], token))
-            or token == brand
+            or (brand and upper == str(brand).upper())
+            or (position + 1 < len(tokens) and combine_load_speed(token, tokens[position + 1]))
             or detect_tire_size(token)
             or detect_load_speed(token)
             or detect_sidewall(token)
             or re.fullmatch(r"\d{1,2}\s*-?P\.?R\.?|P\.?R\.?", token, re.IGNORECASE)
             or upper in resolver.CONSTRUCTION_MARKERS
-            or re.fullmatch(r"[\d.,]+", token)
+            or re.fullmatch(r"\d[\d,]*\.\d+", token)
             or CURRENCY_TOKEN.fullmatch(token)
         )
 
@@ -472,6 +482,36 @@ def _expand_in_cell(
         end += 1
 
     return " ".join(tokens[start:end + 1])
+
+
+def _pattern_after_brand(
+    cell_text: str,
+    brand: str | None,
+    resolver: TireProductResolver,
+) -> str | None:
+    """
+    Pattern written right after the brand, also when it is only a
+    number (the resolver never takes a lone number as pattern):
+
+        165/65 R13 77T Achilles 122           -> 122
+        215/45 ZR17 91W XL Achilles 2233      -> 2233
+    """
+
+    if not brand or not cell_text:
+        return None
+
+    tokens = cell_text.split()
+    upper_tokens = [token.upper() for token in tokens]
+    brand_words = str(brand).upper().split()
+
+    for index in range(len(tokens) - len(brand_words) + 1):
+        if upper_tokens[index:index + len(brand_words)] == brand_words:
+            after = index + len(brand_words)
+            if after < len(tokens):
+                return _expand_in_cell(tokens[after], cell_text, resolver, brand)
+            return None
+
+    return None
 
 
 def build_cells(
@@ -597,6 +637,10 @@ def build_cells(
             values.get("description", ""),
             resolver,
             values.get("brand") or resolved.brand,
+        ) or _pattern_after_brand(
+            values.get("description", ""),
+            values.get("brand") or resolved.brand,
+            resolver,
         )
 
     pattern = pattern or category_pattern
@@ -944,6 +988,71 @@ class GenericTableExtractor:
 
         return None
 
+    @staticmethod
+    def _column_boundaries(cells: list[dict], data_lines: list[list[dict]]) -> list[float]:
+        """
+        Boundary between each pair of header cells.
+
+        Header labels are often centered over left-aligned text:
+
+            No.            Description        u.o.m
+            1  165/65 R13 77T Achilles 122    Pcs
+
+        so halfway between the labels can cut through the text. The
+        boundary is put in the widest gap that no data word crosses
+        (the gutter between the columns); halfway between the labels
+        only when there is no such gap.
+        """
+
+        # Product rows only: text lines with a tire size or two numbers.
+        rows = [
+            line
+            for line in data_lines
+            if contains_tire_size(" ".join(w["text"] for w in line))
+            or sum(1 for w in line if NUMBER_TOKEN.fullmatch(w["text"].replace("$", ""))) >= 2
+        ]
+
+        occupied = sorted((w["x0"], w["x1"]) for line in rows for w in line)
+
+        boundaries = []
+
+        for left_cell, right_cell in zip(cells, cells[1:]):
+
+            low = (left_cell["x0"] + left_cell["x1"]) / 2
+            high = (right_cell["x0"] + right_cell["x1"]) / 2
+            fallback = (left_cell["x1"] + right_cell["x0"]) / 2
+
+            if not occupied:
+                boundaries.append(fallback)
+                continue
+
+            # Free gaps inside (low, high).
+            gaps = []
+            cursor = low
+
+            for x0, x1 in occupied:
+                if x1 <= cursor:
+                    continue
+                if x0 >= high:
+                    break
+                if x0 > cursor:
+                    gaps.append((cursor, x0))
+                cursor = max(cursor, x1)
+
+            if cursor < high:
+                gaps.append((cursor, high))
+
+            # A gap touching the label centers is only half a gutter.
+            inner = [g for g in gaps if g[0] > low and g[1] < high] or gaps
+
+            if inner:
+                gap = max(inner, key=lambda g: g[1] - g[0])
+                boundaries.append((gap[0] + gap[1]) / 2)
+            else:
+                boundaries.append(fallback)
+
+        return boundaries
+
     def rows_from_words(self, words: list[dict]) -> list[dict[str, Any]]:
 
         lines = self._lines(words)
@@ -954,20 +1063,15 @@ class GenericTableExtractor:
             index, cells, layout = header
             start = index + 1
 
-            # Column boundaries halfway between header cells.
-            columns = []
-            for position, cell in enumerate(cells):
-                left = (
-                    (cells[position - 1]["x1"] + cell["x0"]) / 2
-                    if position > 0
-                    else float("-inf")
+            boundaries = self._column_boundaries(cells, lines[start:])
+
+            columns = [
+                (
+                    boundaries[position - 1] if position > 0 else float("-inf"),
+                    boundaries[position] if position < len(boundaries) else float("inf"),
                 )
-                right = (
-                    (cell["x1"] + cells[position + 1]["x0"]) / 2
-                    if position + 1 < len(cells)
-                    else float("inf")
-                )
-                columns.append((left, right))
+                for position in range(len(cells))
+            ]
 
             self.word_columns = columns
             self.word_layout = layout
@@ -1030,6 +1134,24 @@ class GenericTableExtractor:
 # Tables
 # =============================================================
 
+def table_value(cells: dict[str, Any], header: str) -> Any:
+    """
+    Output value of a column. Load/speed is shown as two columns,
+    split from the detected rating (106/104R -> 106/104 | R).
+    """
+
+    if header in ("load_index", "speed_rating"):
+        load_index, speed_rating = split_load_speed(cells.get("load_speed_rating"))
+        return load_index if header == "load_index" else speed_rating
+
+    # Brand as written in the brand list (LANDSAIL -> Landsail when the
+    # list says so), also when it comes from a Brand column.
+    if header == "brand":
+        return canonical_brand(cells.get("brand"))
+
+    return cells.get(header)
+
+
 def rows_to_table(
     rows: list[dict[str, Any]],
     table_id: str,
@@ -1045,22 +1167,24 @@ def rows_to_table(
         table_id=table_id,
         page=page,
         headers=headers,
-        rows=[[row.get(header) for header in headers] for row in rows],
+        rows=[[table_value(row, header) for header in headers] for row in rows],
         extraction_method=method,
     )
 
 
-def table_score(table: Table | None) -> tuple[int, int]:
+def table_score(table: Table | None) -> tuple[int, int, int]:
     """
-    (complete rows, filled key fields).
+    (tire rows, complete rows, filled key fields).
 
-    Complete rows (a product plus quantity or amount) are compared
-    first, so a strategy cannot win by filling cells with guesses;
-    equal tables are decided by the caller's preference order.
+    Tire rows (a tire size plus quantity or amount) are compared first:
+    on a tire invoice a table with sizes always beats one without.
+    Then complete rows (a product plus quantity or amount), so a
+    strategy cannot win by filling cells with guesses; equal tables are
+    decided by the caller's preference order.
     """
 
     if table is None:
-        return (0, 0)
+        return (0, 0, 0)
 
     def column(name):
         return table.headers.index(name) if name in table.headers else None
@@ -1078,7 +1202,14 @@ def table_score(table: Table | None) -> tuple[int, int]:
         and any(filled(row, i) for i in business)
     )
 
-    return (complete, _filled_fields(table))
+    tire_rows = sum(
+        1
+        for row in table.rows
+        if filled(row, column("size"))
+        and any(filled(row, i) for i in business)
+    )
+
+    return (tire_rows, complete, _filled_fields(table))
 
 
 def _filled_fields(table: Table) -> int:
@@ -1087,7 +1218,8 @@ def _filled_fields(table: Table) -> int:
         "size",
         "pattern",
         "brand",
-        "load_speed_rating",
+        "load_index",
+        "speed_rating",
         "quantity",
         "unit_price",
         "amount",

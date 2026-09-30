@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from frappe_pi_validator.extraction.services.table.field_resolver import TireProductResolver
+from frappe_pi_validator.extraction.services.table.generic import _expand_in_cell, _pattern_after_brand
 
 from frappe_pi_validator.extraction.services.table.detectors import (
     detect_load_speed,
@@ -1497,6 +1498,27 @@ class TireRowParser:
             resolved.brand,
         )
 
+        # A column holding size, load/speed, brand and pattern together:
+        #
+        #   1 165/65 R13 77T Achilles 122           -> 122
+        #   16 215/65 R15 96H Achilles 868 All Seasons -> 868 All Seasons
+        mixed_part = next(
+            (
+                part
+                for part in semantic_product_parts
+                if (pattern and pattern in part.split())
+                or (resolved.brand and resolved.brand.upper() in part.upper().split())
+            ),
+            None,
+        )
+
+        if mixed_part and (not pattern or pattern == resolved.pattern):
+            pattern = (
+                _expand_in_cell(pattern, mixed_part, self.product_resolver, resolved.brand)
+                if pattern
+                else _pattern_after_brand(mixed_part, resolved.brand, self.product_resolver)
+            ) or pattern
+
         brand = resolved.brand
 
         if category_pattern:
@@ -1600,6 +1622,21 @@ class TireRowParser:
                     start, last = candidate_start, candidate
 
                 break
+
+        # The end section starts at a column boundary: a column that
+        # also holds product text keeps its trailing number.
+        #
+        #   1 165/65 R13 77T Achilles 122 | Pcs | 100 | $ | 16.45 ...
+        #
+        # 122 is the pattern, not the quantity.
+        while (
+            0 < start <= last
+            and tokens[start][0] == tokens[start - 1][0]
+            and number_count(start, last) > 2
+        ):
+            part_index = tokens[start][0]
+            while start <= last and tokens[start][0] == part_index:
+                start += 1
 
         end_section = [
             token

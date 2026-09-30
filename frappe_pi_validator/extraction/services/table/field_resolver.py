@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+from frappe_pi_validator.extraction.services.table.brands import find_known_brand, is_not_brand
 from frappe_pi_validator.extraction.services.table.detectors import (
     combine_load_speed,
     detect_load_speed,
@@ -94,6 +95,7 @@ class TireProductResolver:
     CONSTRUCTION_MARKERS = {
         "TL",
         "T/L",
+        "LT",
         "TT",
         "TUBELESS",
         "TUBE",
@@ -120,6 +122,11 @@ class TireProductResolver:
     # =============================================================
 
     IGNORED_WORDS = {
+        # Units are never patterns.
+        "PC",
+        "PCS",
+        "SET",
+        "SETS",
         "PR",
         "P",
         "R",
@@ -735,6 +742,19 @@ class TireProductResolver:
         text: str,
     ) -> Optional[FieldMatch]:
 
+        # Known brands first, any letter case: Achilles -> ACHILLES.
+        known = find_known_brand(text)
+
+        if known:
+            name, start, end = known
+            return FieldMatch(
+                value=name,
+                confidence=1.0,
+                start=start,
+                end=end,
+                reason="known tire brand",
+            )
+
         for token in re.finditer(
             r"\S+",
             text,
@@ -788,6 +808,10 @@ class TireProductResolver:
             # -----------------------------------------------------
 
             if value != value.upper():
+                continue
+
+            # Tread / product words (SPORT, CITY, PLUS ...) are not brands.
+            if is_not_brand(value):
                 continue
 
             upper = value.upper()
@@ -1044,9 +1068,9 @@ class TireProductResolver:
         ):
 
             result = re.sub(
-                rf"(?<![A-Z0-9])"
+                rf"(?<![A-Z0-9-])"
                 rf"{re.escape(marker)}"
-                rf"(?![A-Z0-9])",
+                rf"(?![A-Z0-9-])",
                 " ",
                 result,
                 flags=re.IGNORECASE,
@@ -1073,9 +1097,10 @@ class TireProductResolver:
 
         result = cls.PREFIX_RE.sub(" ", result, count=1)
 
+        # Whole words only: the R in MOTO-R or V-R1 is part of the pattern.
         for token in cls.IGNORED_WORDS:
             result = re.sub(
-                rf"(?<![A-Z0-9]){re.escape(token)}(?![A-Z0-9])",
+                rf"(?<![A-Z0-9-]){re.escape(token)}(?![A-Z0-9-])",
                 " ",
                 result,
                 flags=re.IGNORECASE,

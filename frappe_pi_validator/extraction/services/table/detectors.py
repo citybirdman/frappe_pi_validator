@@ -15,96 +15,151 @@ class Detection:
 # Tire size
 # ---------------------------------------------------------
 #
-# Supports:
+# Every standard tire size system:
 #
-# 185/60R15
-# 185/60R15PR
-# 235/45ZR17PR
-# 195R15C-8PR
-# 7.50R16-14PR
+#   Metric (ISO)     205/55R16  205/55 R16  225/40ZR18  205/55VR16
+#                    P215/65R15  LT265/75R16  ST205/75R15  T125/70D17
+#                    195/65B15 (bias belted)  315/80R22.5  215/75R17.5
+#                    IF710/70R42  VF600/70R30  420/85R34 (agricultural)
+#   Motorcycle       120/70ZR17  90/90-21  80/100-21  130/70-12  MT90-16
+#   Alpha-numeric    185R14C  155R12C  165SR13  185HR14  205R16
+#   Numeric (bias)   7.50R16  7.50-16  12.00R20  11.00-20  6.00-9  3.00-18
+#   Agricultural     18.4-38  14.9-24  23.5R25  16.9R28  30.5L-32
+#   Truck            11R22.5  12R22.5  9.5R17.5  10-16.5 (skid steer)
+#   Flotation        31X10.50R15LT  33X12.50R20  35x12.5R17  28x9-15  18x7-8
+#   Millimetric TRX  220/55VR390
+#   Slash rim        205/55/16
 #
-# Also supports:
+# Suffixes kept with the size: C (commercial), LT (light truck).
+# A "TH" source prefix is not part of the size (TH185/60R15PR).
 #
-# TH185/60R15PR
-# TH195R15C-8PR
-# TH7.50R16-14PR
-#
-# And P-metric / LT, truck and bias forms:
-#
-# P225/70R15
-# 7.50R16LT
-# 315/80R22.5, 11R22.5, 12.00R20
-# 31X10.50R15
-# 7.50-16
-#
-# The optional final construction letter is consumed only
-# when it is NOT followed by R.
-#
-# This is important for:
-#
-# 185/60R15PR
-#
-# where P belongs to PR, not to the tire size.
+# Every match is range-checked (width, aspect ratio, rim), so dates,
+# prices, phone numbers and codes are not taken as sizes.
 # ---------------------------------------------------------
 
+_RIM = r"\d{1,2}(?:\.\d)?"            # 8, 16, 22.5, 17.5, 15.3
+_SUFFIX = r"(?:LT|C(?![A-Z]))?"        # 195R14C, 7.50R16LT
+
 TIRE_SIZE_PATTERN = re.compile(
-    r"""
-    (?<![A-Z0-9])
-    (?:
-        TH(?P<th_size>
-            \d{3}/\d{2}Z?R\d{2}
-            (?:[A-Z](?!R))?
-            |
-            \d{3}R\d{2}
-            (?:[A-Z](?!R))?
-            |
-            \d\.\d{2}R\d{2}
-            (?:[A-Z](?!R))?
-        )
+    rf"""
+    (?<![A-Z0-9./-])
+    (?:TH)?                                    # source prefix, not part of the size
+    (?P<size>
+        # Flotation: 31X10.50R15, 28x9-15, 18x7-8
+        (?P<flo_od>\d{{2}})\s?X\s?(?P<flo_w>\d{{1,2}}(?:\.\d{{1,2}})?)
+        (?:\s?[RDB]\s?|-){_RIM}
         |
-        (?P<size>
-            # P-metric / light-truck prefix: P225/70R15, LT265/75R16
-            (?:P|LT)?
-            (?:
-                \d{2}X\d{1,2}\.\d{2}Z?R\d{2}      # 31X10.50R15
-                |
-                \d{3}/\d{2}(?:\.\d)?Z?R\d{2}(?:\.5)?   # 205/55R16, 315/80R22.5
-                |
-                \d{3}R\d{2}(?:\.5)?                # 185R14C, 385R22.5
-                |
-                \d{1,2}\.\d{2}R\d{2}(?:\.5)?     # 7.50R16, 12.00R20
-                |
-                \d{2}R\d{2}(?:\.5)?                # 11R22.5, 12R22.5
-                |
-                \d{1,2}\.\d{2}-\d{2}(?:\.5)?     # 7.50-16 (bias)
-            )
-            # Suffix: 195R15C, 7.50R16LT
-            (?:LT|[A-Z](?!R))?
-        )
+        # Millimetric (TRX): 220/55VR390
+        (?P<trx_w>\d{{3}})/(?P<trx_a>\d{{2}})\s?[VHZ]?R\s?(?P<trx_rim>\d{{3}})
+        |
+        # Metric: 205/55R16, 205/55 ZR 16, P215/65R15, 90/90-21, 195/65B15
+        (?:P|LT|ST|T|IF|VF)?
+        (?P<met_w>\d{{2,3}})\s?/\s?(?P<met_a>\d{{2,3}})
+        (?:\s?[ZVHWY]?\s?[RDB]\s?|-)(?P<met_rim>{_RIM})
+        |
+        # Slash rim: 205/55/16
+        (?P<sl_w>\d{{3}})/(?P<sl_a>\d{{2}})/(?P<sl_rim>\d{{2}})
+        |
+        # Numeric / agricultural: 7.50R16, 7.50-16, 12.00R20, 18.4-38, 30.5L-32
+        (?:LT)?(?P<num_w>\d{{1,2}}\.\d{{1,2}})(?:\s?[RDB]\s?|L?-)(?P<num_rim>{_RIM})
+        |
+        # Skid steer: 10-16.5, 12-16.5, 14-17.5
+        (?P<sk_w>\d{{2}})-(?P<sk_rim>\d{{2}}\.5)
+        |
+        # Truck, integer width: 11R22.5, 12R22.5, 12R20
+        (?P<int_w>\d{{2}})R(?P<int_rim>\d{{2}}(?:\.5)?)
+        |
+        # Alpha-numeric: 185R14C, 165SR13, 185HR14, 205R16
+        (?P<al_w>\d{{3}})[SHTVZ]?R(?P<al_rim>\d{{2}})
+        |
+        # Motorcycle alpha: MT90-16, MU85B16
+        M[A-Z](?P<mo_a>\d{{2}})[-B](?P<mo_rim>\d{{2}})
     )
+    {_SUFFIX}
+    (?![\d.])
     """,
     re.IGNORECASE | re.VERBOSE,
 )
 
 
+def _in(value, low, high) -> bool:
+    return value is not None and low <= float(value) <= high
+
+
+def _valid_size(match: re.Match) -> bool:
+    """Width / aspect ratio / rim within real tire ranges."""
+
+    g = match.groupdict()
+
+    if g["flo_od"]:
+        return _in(g["flo_od"], 10, 66) and _in(g["flo_w"], 3, 25)
+
+    if g["trx_w"]:
+        return _in(g["trx_w"], 140, 280) and _in(g["trx_a"], 40, 80) and _in(g["trx_rim"], 340, 460)
+
+    if g["met_w"]:
+        width = float(g["met_w"])
+        return (
+            _in(width, 60, 900)
+            and _in(g["met_a"], 25, 110)
+            and _in(g["met_rim"], 8, 54)
+            # passenger / truck widths end in 0 or 5 (205, 315); motorcycle 2-digit widths vary
+            and (width < 100 or width % 5 == 0)
+        )
+
+    if g["sl_w"]:
+        return _in(g["sl_w"], 125, 355) and _in(g["sl_a"], 25, 95) and _in(g["sl_rim"], 12, 24) \
+            and float(g["sl_w"]) % 5 == 0 and float(g["sl_a"]) % 5 == 0
+
+    if g["num_w"]:
+        # Two decimals (7.50-16, 3.50-4): rims from 4". One decimal is
+        # agricultural (18.4-38, 23.5R25): wide tires on big rims.
+        if len(g["num_w"].split(".")[1]) == 1:
+            return _in(g["num_w"], 5, 45) and _in(g["num_rim"], 8, 54)
+        return _in(g["num_w"], 2.5, 45) and _in(g["num_rim"], 4, 54)
+
+    if g["sk_w"]:
+        return _in(g["sk_w"], 8, 16)
+
+    if g["int_w"]:
+        return _in(g["int_w"], 8, 16) and _in(g["int_rim"], 15, 24.5)
+
+    if g["al_w"]:
+        return _in(g["al_w"], 125, 235) and float(g["al_w"]) % 5 == 0 and _in(g["al_rim"], 10, 16)
+
+    if g["mo_a"]:
+        return _in(g["mo_a"], 60, 100) and _in(g["mo_rim"], 10, 23)
+
+    return False
+
+
+def _normalize_size(text: str) -> str:
+    """205/55 r 16 -> 205/55R16, 31x10.50r15lt -> 31X10.50R15LT."""
+
+    return re.sub(r"\s+", "", text).upper()
+
+
 def detect_tire_size(text: str) -> Detection | None:
-    match = TIRE_SIZE_PATTERN.search(text)
+    position = 0
 
-    if not match:
-        return None
+    while True:
+        match = TIRE_SIZE_PATTERN.search(text, position)
 
-    if match.group("th_size"):
-        size = match.group("th_size")
-        start = match.start("th_size")
-    else:
-        size = match.group("size")
-        start = match.start("size")
+        if not match:
+            return None
 
-    return Detection(
-        value=size,
-        start=start,
-        end=start + len(size),
-    )
+        if _valid_size(match):
+            # Span of the size as written (callers mask/split by it);
+            # value in compact standard form.
+            end = match.end()
+            return Detection(
+                value=_normalize_size(text[match.start("size"):end]),
+                start=match.start("size"),
+                end=end,
+            )
+
+        position = match.start() + 1
+
 
 def contains_tire_size(text: str) -> bool:
     return detect_tire_size(text) is not None
@@ -144,10 +199,10 @@ def contains_tire_size(text: str) -> bool:
 #
 #     LI   load index 0-279 (max load per tire)
 #     LI2  dual-fitment load index, lower than LI
-#     SS   speed symbol: B-H, J-N, P-W, Y, Z or (Y)
-#          (A1-A8 are special; A, I, O, X alone are never speed symbols)
+#     SS   speed symbol: A1-A8 (agricultural / industrial), B-H, J-N,
+#          P-W, Y, Z or (Y); A, I, O, X alone are never speed symbols
 
-SPEED_SYMBOL = r"(?:[B-HJ-NP-WYZ]|\(Y\))"
+SPEED_SYMBOL = r"(?:A[1-8]|[B-HJ-NP-WYZ]|\(Y\))"
 
 MAX_LOAD_INDEX = 279
 
@@ -218,6 +273,39 @@ def _valid_load_indexes(match: re.Match) -> bool:
     second = match.group("dual_li2") or match.group("us_dual_li2")
 
     return int(first) <= MAX_LOAD_INDEX and int(second) < int(first)
+
+
+def split_load_speed(value) -> tuple[str | None, str | None]:
+    """
+    Load/speed rating -> (load index, speed rating):
+
+        91V       -> ("91", "V")
+        106/104R  -> ("106/104", "R")
+        114/XL_V  -> ("114", "V")      Landsail notation
+        109/107_T -> ("109/107", "T")
+        98(Y)     -> ("98", "(Y)")
+        146A8     -> ("146", "A8")
+        V         -> (None, "V")       speed rating only
+    """
+
+    if value in (None, ""):
+        return None, None
+
+    text = re.sub(r"\s*XL$", "", str(value).strip(), flags=re.IGNORECASE).upper()
+
+    if re.fullmatch(SPEED_SYMBOL, text, re.IGNORECASE):
+        return None, text
+
+    match = re.fullmatch(
+        rf"(?P<li>\d{{2,3}}(?:/\d{{2,3}})?)(?:/XL_|_)?(?P<ss>{SPEED_SYMBOL})",
+        text,
+        re.IGNORECASE,
+    )
+
+    if not match:
+        return None, None
+
+    return match.group("li"), match.group("ss").upper()
 
 
 def detect_speed_symbol(text) -> Detection | None:

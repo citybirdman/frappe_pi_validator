@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from frappe_pi_validator.extraction.models.extraction import Table, TextBlock
 from frappe_pi_validator.extraction.services.table.models import OCRBlock, ParsedRow
+from frappe_pi_validator.extraction.services.table.generic import table_value
 from frappe_pi_validator.extraction.services.table_service import TableService
 
 
@@ -94,7 +95,8 @@ class TableExtractor:
             "brand",
             "size",
             "pattern",
-            "load_speed_rating",
+            "load_index",
+            "speed_rating",
             "pr",
             "sidewall",
             "quantity",
@@ -109,7 +111,7 @@ class TableExtractor:
 
         for row in rows:
             table_rows.append([
-                row.cells.get(header)
+                table_value(row.cells, header)
                 for header in headers
             ])
 

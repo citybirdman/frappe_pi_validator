@@ -17,7 +17,8 @@ ITEM_FIELDS = [
     "brand",
     "size",
     "pattern",
-    "load_speed_rating",
+    "load_index",
+    "speed_rating",
     "pr",
     "sidewall",
     "description",
@@ -104,6 +105,11 @@ def extract_document(file_path: str, file_name: str) -> dict[str, Any]:
             }
             item["source"] = source
             item["extraction_method"] = table.extraction_method
+
+            # Joined rating kept for pages that still show one column.
+            item["load_speed_rating"] = (
+                f"{item['load_index'] or ''}{item['speed_rating'] or ''}" or None
+            )
 
             items.append(item)
 

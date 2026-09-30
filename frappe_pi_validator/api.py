@@ -28,6 +28,7 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import cint
 
+from frappe_pi_validator.extraction.services.table import brands
 from frappe_pi_validator.pi_extractor import extract_document
 
 PAGE = "pi-validator"
@@ -35,6 +36,26 @@ PAGE = "pi-validator"
 ALLOWED_EXTENSIONS = {".pdf", ".xlsx", ".xlsm", ".xls"}
 DEFAULT_MAX_FILE_MB = 10
 DEFAULT_RATE_LIMIT = 30
+
+
+def use_site_brands() -> None:
+	"""
+	Recognize the brands of this site's Brand list (ERPNext "Brand"),
+	shown exactly as written there. Without Brand records (or without
+	the DocType) the built-in brand list is used.
+	"""
+
+	names = []
+
+	if frappe.db.exists("DocType", "Brand"):
+		names = frappe.get_all("Brand", pluck="name", limit_page_length=0)
+
+	brands.set_known_brands(names)
+
+
+def extract_with_site_brands(path: str, file_name: str) -> dict:
+	use_site_brands()
+	return extract_document(path, file_name)
 
 
 def check_page_access():
@@ -66,7 +87,7 @@ def extract_file(file_url: str, include_result: bool = False) -> dict:
 
 	path, file_name = get_file_path(file_url)
 
-	data = extract_document(path, file_name)
+	data = extract_with_site_brands(path, file_name)
 	data["file_url"] = file_url
 	data["file_name"] = file_name
 
@@ -117,7 +138,7 @@ def extract_upload(upload) -> dict:
 		temp_path = temp_file.name
 
 	try:
-		data = extract_document(temp_path, file_name)
+		data = extract_with_site_brands(temp_path, file_name)
 	except Exception:
 		frappe.log_error(title=_("Public PI extraction failed"), message=frappe.get_traceback())
 		frappe.throw(_("The file could not be read. Check that it is a valid PI document."))

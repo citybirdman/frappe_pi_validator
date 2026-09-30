@@ -11,6 +11,7 @@ from openpyxl import load_workbook
 from frappe_pi_validator.extraction.models.extraction import DocumentResult, Sheet, Table
 from frappe_pi_validator.extraction.services.table.generic import (
     GenericTableExtractor,
+    table_value,
     raw_table,
     rows_to_table,
     table_score,
@@ -139,7 +140,8 @@ class ExcelProcessor:
         "brand",
         "size",
         "pattern",
-        "load_speed_rating",
+        "load_index",
+        "speed_rating",
         "pr",
         "sidewall",
         "quantity",
@@ -472,10 +474,10 @@ class ExcelProcessor:
             # Known sheet formats come first and win ties.
             best = max(
                 candidates,
-                key=lambda table: table_score(table)[0],
+                key=lambda table: table_score(table)[:2],
             )
 
-            if table_score(best)[0] > 0:
+            if table_score(best)[1] > 0:
                 return [best]
 
         table = raw_table(rows, "raw_table_1", None)
@@ -538,7 +540,7 @@ class ExcelProcessor:
 
         table_rows = [
             [
-                row.cells.get(header)
+                table_value(row.cells, header)
                 for header in self.HEADERS
             ]
             for row in parsed_rows

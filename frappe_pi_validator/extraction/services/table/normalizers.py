@@ -13,9 +13,11 @@ def normalize_text(value: Any) -> str:
 
 def normalize_pr(value: str | None) -> str | None:
     """
-    8PR, 8 P.R., PR8, 04PR -> 8PR / 4PR.
+    Ply rating as P + two digits:
 
-    A valid ply rating is a multiple of 2: 2PR, 4PR, 6PR, 8PR, 10PR ...
+        8PR, 8 P.R., PR8, 08 -> P08      4PR -> P04      14PR -> P14
+
+    A valid ply rating is a multiple of 2 (P02, P04, P06 ... P16 ...).
     No PR in the document, or an odd / zero number (5PR, 9PR, 0PR)
     -> None.
     """
@@ -24,6 +26,12 @@ def normalize_pr(value: str | None) -> str | None:
         return None
 
     text = normalize_text(value)
+
+    # Already in output form: P04, P14
+    output_form = re.fullmatch(r"P(\d{1,2})", text, re.IGNORECASE)
+
+    if output_form:
+        text = f"{output_form.group(1)}PR"
 
     match = re.search(
         r"""
@@ -46,7 +54,7 @@ def normalize_pr(value: str | None) -> str | None:
     if number < 2 or number % 2:
         return None
 
-    return f"{number}PR"
+    return f"P{number:02d}"
 
 
 def normalize_quantity(value: str | None) -> int | None:
